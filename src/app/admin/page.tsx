@@ -2735,6 +2735,20 @@ const VideoSourceConfig = ({
     from: 'config',
   });
 
+  // 🔑 普通视频源代理配置
+  const [videoProxySettings, setVideoProxySettings] = useState({
+    enabled: false,
+    proxyUrl: 'https://corsapi.smone.workers.dev'
+  });
+
+  // 代理状态检测
+  const [proxyStatus, setProxyStatus] = useState<{
+    healthy: boolean;
+    responseTime?: number;
+    error?: string;
+    lastCheck?: string;
+  } | null>(null);
+
   // 批量操作相关状态
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
 
@@ -2814,6 +2828,14 @@ const VideoSourceConfig = ({
       // 重置选择状态
       setSelectedSources(new Set());
     }
+
+    // 加载普通视频源代理配置
+    if (config?.VideoProxyConfig) {
+      setVideoProxySettings({
+        enabled: config.VideoProxyConfig.enabled ?? false,
+        proxyUrl: config.VideoProxyConfig.proxyUrl || 'https://corsapi.smone.workers.dev'
+      });
+    }
   }, [config]);
 
   // 通用 API 请求
@@ -2857,6 +2879,97 @@ const VideoSourceConfig = ({
     withLoading(`toggleAdult_${key}`, () => callSourceApi({ action: 'update_adult', key, is_adult })).catch(() => {
       console.error('操作失败', 'update_adult', key);
     });
+  };
+
+  // 保存普通视频源代理配置
+  const handleSaveVideoProxy = async () => {
+    try {
+      // 验证代理URL
+      if (videoProxySettings.enabled && videoProxySettings.proxyUrl) {
+        try {
+          new URL(videoProxySettings.proxyUrl);
+        } catch {
+          showAlert({
+            type: 'error',
+            title: '配置错误',
+            message: '代理URL格式不正确'
+          });
+          return;
+        }
+      }
+
+      await withLoading('saveVideoProxy', async () => {
+        const response = await fetch('/api/admin/video-proxy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(videoProxySettings),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || '保存失败');
+        }
+
+        await refreshConfig();
+      });
+
+      showAlert({
+        type: 'success',
+        title: '保存成功',
+        message: '视频源代理配置已保存',
+        timer: 2000
+      });
+    } catch (error) {
+      showAlert({
+        type: 'error',
+        title: '保存失败',
+        message: error instanceof Error ? error.message : '保存失败'
+      });
+    }
+  };
+
+  // 检测代理状态
+  const handleCheckProxyStatus = async () => {
+    try {
+      await withLoading('checkProxyStatus', async () => {
+        const response = await fetch('/api/proxy-status');
+        if (!response.ok) {
+          throw new Error('检测失败');
+        }
+
+        const data = await response.json();
+        setProxyStatus({
+          healthy: data.videoProxy.health.healthy,
+          responseTime: data.videoProxy.health.responseTime,
+          error: data.videoProxy.health.error,
+          lastCheck: new Date().toLocaleString('zh-CN'),
+        });
+
+        if (data.videoProxy.health.healthy) {
+          showAlert({
+            type: 'success',
+            title: '代理正常',
+            message: `响应时间: ${data.videoProxy.health.responseTime}ms`,
+            timer: 3000
+          });
+        } else {
+          showAlert({
+            type: 'warning',
+            title: '代理异常',
+            message: data.videoProxy.health.error || '无法连接到 Worker',
+            timer: 3000
+          });
+        }
+      });
+    } catch (error) {
+      showAlert({
+        type: 'error',
+        title: '检测失败',
+        message: error instanceof Error ? error.message : '检测失败'
+      });
+    }
   };
 
   const handleBatchMarkAdult = async (markAsAdult: boolean) => {
@@ -3477,6 +3590,145 @@ const VideoSourceConfig = ({
 
   return (
     <div className='space-y-6'>
+      {/* Cloudflare Worker 代理配置 */}
+      <div className='border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gradient-to-r from-blue-50/50 to-indigo-50/50 dark:from-blue-900/10 dark:to-indigo-900/10'>
+        <div className='flex items-center justify-between mb-4'>
+          <div>
+            <h3 className='text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2'>
+              <svg className='w-5 h-5 text-blue-600' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M13 10V3L4 14h7v7l9-11h-7z' />
+              </svg>
+              Cloudflare Worker 代理加速
+            </h3>
+            <p className='text-sm text-gray-600 dark:text-gray-400 mt-1'>
+              为网页播放启用全球CDN加速，提升视频源API访问速度和稳定性
+            </p>
+          </div>
+          <label className='relative inline-flex items-center cursor-pointer'>
+            <input
+              type='checkbox'
+              checked={videoProxySettings.enabled}
+              onChange={(e) => setVideoProxySettings(prev => ({ ...prev, enabled: e.target.checked }))}
+              className='sr-only peer'
+            />
+            <div className="w-11 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+          </label>
+        </div>
+
+        {videoProxySettings.enabled && (
+          <div className='space-y-3'>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>
+                Cloudflare Worker 地址
+              </label>
+              <input
+                type='text'
+                value={videoProxySettings.proxyUrl}
+                onChange={(e) => setVideoProxySettings(prev => ({ ...prev, proxyUrl: e.target.value }))}
+                placeholder='https://your-worker.workers.dev'
+                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+              />
+              <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                默认地址：https://corsapi.smone.workers.dev（支持自定义部署）
+              </p>
+            </div>
+
+            <div className='bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3'>
+              <h4 className='text-sm font-semibold text-blue-900 dark:text-blue-300 mb-2'>
+                💡 功能说明
+              </h4>
+              <ul className='text-xs text-blue-800 dark:text-blue-300 space-y-1'>
+                <li>• 通过Cloudflare全球CDN加速视频源API访问</li>
+                <li>• 自动转发所有API参数（ac=list, ac=detail等）</li>
+                <li>• 为每个源生成唯一路径，提升兼容性</li>
+                <li>• 仅影响网页播放，不影响TVBox配置</li>
+              </ul>
+            </div>
+
+            <div className='bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3'>
+              <h4 className='text-sm font-semibold text-yellow-900 dark:text-yellow-300 mb-2'>
+                ⚠️ 自定义部署
+              </h4>
+              <p className='text-xs text-yellow-800 dark:text-yellow-300'>
+                如需自定义部署Worker服务，请参考：
+                <a
+                  href='https://github.com/SzeMeng76/CORSAPI'
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  className='underline hover:text-yellow-600 ml-1'
+                >
+                  CORSAPI项目
+                </a>
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className='flex justify-end gap-2'>
+          <button
+            onClick={handleCheckProxyStatus}
+            disabled={!videoProxySettings.enabled || isLoading('checkProxyStatus')}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+              !videoProxySettings.enabled || isLoading('checkProxyStatus')
+                ? 'bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-gray-500'
+                : 'bg-green-600 hover:bg-green-700 text-white'
+            }`}
+          >
+            {isLoading('checkProxyStatus') ? '检测中...' : '🔍 检测代理状态'}
+          </button>
+          <button
+            onClick={handleSaveVideoProxy}
+            disabled={isLoading('saveVideoProxy')}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+              isLoading('saveVideoProxy')
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+          >
+            {isLoading('saveVideoProxy') ? '保存中...' : '保存代理配置'}
+          </button>
+        </div>
+
+        {/* 代理状态显示 */}
+        {proxyStatus && (
+          <div className={`mt-3 p-3 rounded-lg border ${
+            proxyStatus.healthy
+              ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+              : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+          }`}>
+            <div className='flex items-center gap-2'>
+              {proxyStatus.healthy ? (
+                <svg className='w-5 h-5 text-green-600' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M5 13l4 4L19 7' />
+                </svg>
+              ) : (
+                <svg className='w-5 h-5 text-red-600' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M6 18L18 6M6 6l12 12' />
+                </svg>
+              )}
+              <div className='flex-1'>
+                <div className={`text-sm font-semibold ${
+                  proxyStatus.healthy ? 'text-green-900 dark:text-green-300' : 'text-red-900 dark:text-red-300'
+                }`}>
+                  {proxyStatus.healthy ? '✅ 代理正常工作' : '❌ 代理连接失败'}
+                </div>
+                <div className='text-xs text-gray-600 dark:text-gray-400 mt-1'>
+                  {proxyStatus.healthy && proxyStatus.responseTime && (
+                    <span>响应时间: {proxyStatus.responseTime}ms</span>
+                  )}
+                  {!proxyStatus.healthy && proxyStatus.error && (
+                    <span>错误: {proxyStatus.error}</span>
+                  )}
+                  {proxyStatus.lastCheck && (
+                    <span className='ml-3'>检测时间: {proxyStatus.lastCheck}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 添加视频源表单 */}
       <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4'>
         <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
